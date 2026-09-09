@@ -28,5 +28,6 @@ jobs:
           libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: cargo check --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo fmt --check
         working-directory: src-tauri
