@@ -103,6 +103,7 @@ pub enum StoreError {
     Json(serde_json::Error),
     NotFound { what: &'static str, id: String },
     PatchNotAnObject,
+    InvalidPatch(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -112,6 +113,7 @@ impl std::fmt::Display for StoreError {
             StoreError::Json(e) => write!(f, "json error: {e}"),
             StoreError::NotFound { what, id } => write!(f, "{what} not found: {id}"),
             StoreError::PatchNotAnObject => write!(f, "patch must be a JSON object"),
+            StoreError::InvalidPatch(msg) => write!(f, "invalid patch: {msg}"),
         }
     }
 }
@@ -397,18 +399,29 @@ fn get_part(&self, id: &str) -> Result<Option<Part>, StoreError> {
 
 /// Merge-only part update. The patch must be a JSON object; its keys are
 /// shallow-merged into the stored `data`. A `state` key moves the `state`
-/// column instead of landing in `data`. This is the SOLE write path for
+/// column instead of landing in `data`. Stored non-object data and non-string
+/// `state` values are rejected with `InvalidPatch` before any write, so failed
+/// patches are no-ops. This is the SOLE write path for
 /// part rows — do not add another.
 pub fn update_part(&self, id: &str, patch: &JsonValue) -> Result<Part, StoreError> {
     let patch_obj = patch.as_object().ok_or(StoreError::PatchNotAnObject)?;
     let current = self
         .get_part(id)?
         .ok_or_else(|| StoreError::NotFound { what: "part", id: id.to_string() })?;
-    let mut data = current.data.as_object().cloned().unwrap_or_default();
+    let mut data = current
+        .data
+        .as_object()
+        .cloned()
+        .ok_or_else(|| StoreError::InvalidPatch("stored part data is not a JSON object".to_string()))?;
     let mut state = current.state.clone();
     for (k, v) in patch_obj {
         if k == "state" {
-            state = v.as_str().unwrap_or(&state).to_string();
+            match v.as_str() {
+                Some(s) => state = s.to_string(),
+                None => {
+                    return Err(StoreError::InvalidPatch("state must be a string".to_string()));
+                }
+            }
         } else {
             data.insert(k.clone(), v.clone());
         }
@@ -425,7 +438,9 @@ pub fn update_part(&self, id: &str, patch: &JsonValue) -> Result<Part, StoreErro
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml store::tests::update_part`
-Expected: PASS (2 passed).
+Expected: PASS (5 passed — the 2 below plus `InvalidPatch` on non-object
+stored data, `InvalidPatch` on non-string `state`, and `NotFound` on unknown
+id, each asserting the failed patch changed nothing).
 
 - [ ] **Step 5: Commit**
 
