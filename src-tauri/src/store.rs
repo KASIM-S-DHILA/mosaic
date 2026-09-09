@@ -10,6 +10,7 @@ pub enum StoreError {
     Json(serde_json::Error),
     NotFound { what: &'static str, id: String },
     PatchNotAnObject,
+    InvalidPatch(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -19,6 +20,7 @@ impl std::fmt::Display for StoreError {
             StoreError::Json(e) => write!(f, "json error: {e}"),
             StoreError::NotFound { what, id } => write!(f, "{what} not found: {id}"),
             StoreError::PatchNotAnObject => write!(f, "patch must be a JSON object"),
+            StoreError::InvalidPatch(msg) => write!(f, "invalid patch: {msg}"),
         }
     }
 }
@@ -171,18 +173,27 @@ impl Store {
     /// Merge-only part update. The patch must be a JSON object; its keys are
     /// shallow-merged into the stored `data`. A `state` key moves the `state`
     /// column instead of landing in `data`. This is the SOLE write path for
-    /// part rows — do not add another.
+    /// part rows -- do not add another.
     pub fn update_part(&self, id: &str, patch: &JsonValue) -> Result<Part, StoreError> {
         let patch_obj = patch.as_object().ok_or(StoreError::PatchNotAnObject)?;
         let current = self.get_part(id)?.ok_or_else(|| StoreError::NotFound {
             what: "part",
             id: id.to_string(),
         })?;
-        let mut data = current.data.as_object().cloned().unwrap_or_default();
+        let mut data = current.data.as_object().cloned().ok_or_else(|| {
+            StoreError::InvalidPatch("stored part data is not a JSON object".to_string())
+        })?;
         let mut state = current.state.clone();
         for (k, v) in patch_obj {
             if k == "state" {
-                state = v.as_str().unwrap_or(&state).to_string();
+                match v.as_str() {
+                    Some(s) => state = s.to_string(),
+                    None => {
+                        return Err(StoreError::InvalidPatch(
+                            "state must be a string".to_string(),
+                        ));
+                    }
+                }
             } else {
                 data.insert(k.clone(), v.clone());
             }
@@ -306,5 +317,59 @@ mod tests {
         // failed update changed nothing
         let unchanged = store.get_part(&p.id).unwrap().unwrap();
         assert_eq!(unchanged.data, serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn update_part_errors_without_destroying_non_object_data() {
+        let store = open_test_store();
+        let session = store.create_session("s").unwrap();
+        let msg = store
+            .append_message(&session.id, serde_json::json!({}))
+            .unwrap();
+        let p = store
+            .add_part(&msg.id, &session.id, "proposed", serde_json::json!([1, 2]))
+            .unwrap();
+        let err = store
+            .update_part(&p.id, &serde_json::json!({"a": 1}))
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidPatch(_)));
+        // failed update changed nothing
+        let unchanged = store.get_part(&p.id).unwrap().unwrap();
+        assert_eq!(unchanged.data, serde_json::json!([1, 2]));
+        assert_eq!(unchanged.state, "proposed");
+    }
+
+    #[test]
+    fn update_part_rejects_non_string_state() {
+        let store = open_test_store();
+        let session = store.create_session("s").unwrap();
+        let msg = store
+            .append_message(&session.id, serde_json::json!({}))
+            .unwrap();
+        let p = store
+            .add_part(
+                &msg.id,
+                &session.id,
+                "proposed",
+                serde_json::json!({"a": 1}),
+            )
+            .unwrap();
+        let err = store
+            .update_part(&p.id, &serde_json::json!({"state": 123}))
+            .unwrap_err();
+        assert!(matches!(err, StoreError::InvalidPatch(_)));
+        // failed update changed nothing
+        let unchanged = store.get_part(&p.id).unwrap().unwrap();
+        assert_eq!(unchanged.state, "proposed");
+        assert_eq!(unchanged.data, serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn update_part_returns_not_found_for_unknown_id() {
+        let store = open_test_store();
+        let err = store
+            .update_part("does-not-exist", &serde_json::json!({"a": 1}))
+            .unwrap_err();
+        assert!(matches!(err, StoreError::NotFound { .. }));
     }
 }
