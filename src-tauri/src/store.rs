@@ -149,6 +149,55 @@ impl Store {
         )?;
         Ok(part)
     }
+
+    fn get_part(&self, id: &str) -> Result<Option<Part>, StoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, message_id, session_id, state, data FROM part WHERE id = ?1")?;
+        let mut rows = stmt.query(params![id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let data_text: String = row.get(4)?;
+        Ok(Some(Part {
+            id: row.get(0)?,
+            message_id: row.get(1)?,
+            session_id: row.get(2)?,
+            state: row.get(3)?,
+            data: serde_json::from_str(&data_text)?,
+        }))
+    }
+
+    /// Merge-only part update. The patch must be a JSON object; its keys are
+    /// shallow-merged into the stored `data`. A `state` key moves the `state`
+    /// column instead of landing in `data`. This is the SOLE write path for
+    /// part rows — do not add another.
+    pub fn update_part(&self, id: &str, patch: &JsonValue) -> Result<Part, StoreError> {
+        let patch_obj = patch.as_object().ok_or(StoreError::PatchNotAnObject)?;
+        let current = self.get_part(id)?.ok_or_else(|| StoreError::NotFound {
+            what: "part",
+            id: id.to_string(),
+        })?;
+        let mut data = current.data.as_object().cloned().unwrap_or_default();
+        let mut state = current.state.clone();
+        for (k, v) in patch_obj {
+            if k == "state" {
+                state = v.as_str().unwrap_or(&state).to_string();
+            } else {
+                data.insert(k.clone(), v.clone());
+            }
+        }
+        let merged = JsonValue::Object(data);
+        self.conn.execute(
+            "UPDATE part SET state = ?1, data = ?2 WHERE id = ?3",
+            params![state, merged.to_string(), id],
+        )?;
+        Ok(Part {
+            state,
+            data: merged,
+            ..current
+        })
+    }
 }
 
 #[cfg(test)]
@@ -199,5 +248,63 @@ mod tests {
         assert_ne!(p1.id, p2.id);
         assert_eq!(p1.data, serde_json::json!({"n": 1}));
         assert_eq!(p2.data, serde_json::json!({"n": 2}));
+    }
+
+    #[test]
+    fn update_part_merges_without_touching_sibling_part() {
+        let store = open_test_store();
+        let session = store.create_session("s").unwrap();
+        let msg = store
+            .append_message(&session.id, serde_json::json!({}))
+            .unwrap();
+        let p1 = store
+            .add_part(
+                &msg.id,
+                &session.id,
+                "proposed",
+                serde_json::json!({"a": 1, "b": 1}),
+            )
+            .unwrap();
+        let p2_before = store
+            .add_part(
+                &msg.id,
+                &session.id,
+                "proposed",
+                serde_json::json!({"x": 9}),
+            )
+            .unwrap();
+
+        let updated = store
+            .update_part(&p1.id, &serde_json::json!({"b": 2, "state": "running"}))
+            .unwrap();
+
+        assert_eq!(updated.data, serde_json::json!({"a": 1, "b": 2}));
+        assert_eq!(updated.state, "running");
+        let p2_after = store.get_part(&p2_before.id).unwrap().unwrap();
+        assert_eq!(p2_before, p2_after);
+    }
+
+    #[test]
+    fn update_part_rejects_non_object_patch() {
+        let store = open_test_store();
+        let session = store.create_session("s").unwrap();
+        let msg = store
+            .append_message(&session.id, serde_json::json!({}))
+            .unwrap();
+        let p = store
+            .add_part(
+                &msg.id,
+                &session.id,
+                "proposed",
+                serde_json::json!({"a": 1}),
+            )
+            .unwrap();
+        let err = store
+            .update_part(&p.id, &serde_json::json!([1, 2, 3]))
+            .unwrap_err();
+        assert!(matches!(err, StoreError::PatchNotAnObject));
+        // failed update changed nothing
+        let unchanged = store.get_part(&p.id).unwrap().unwrap();
+        assert_eq!(unchanged.data, serde_json::json!({"a": 1}));
     }
 }
