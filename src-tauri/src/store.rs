@@ -109,6 +109,46 @@ impl Store {
         )?;
         Ok(session)
     }
+
+    pub fn append_message(&self, session_id: &str, data: JsonValue) -> Result<Message, StoreError> {
+        let message = Message {
+            id: Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            created_at: Utc::now(),
+            data: data.clone(),
+        };
+        self.conn.execute(
+            "INSERT INTO message (id, session_id, created_at, data) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                message.id,
+                message.session_id,
+                now_rfc3339(),
+                data.to_string()
+            ],
+        )?;
+        Ok(message)
+    }
+
+    pub fn add_part(
+        &self,
+        message_id: &str,
+        session_id: &str,
+        state: &str,
+        data: JsonValue,
+    ) -> Result<Part, StoreError> {
+        let part = Part {
+            id: Uuid::new_v4().to_string(),
+            message_id: message_id.to_string(),
+            session_id: session_id.to_string(),
+            state: state.to_string(),
+            data: data.clone(),
+        };
+        self.conn.execute(
+            "INSERT INTO part (id, message_id, session_id, state, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![part.id, part.message_id, part.session_id, part.state, data.to_string()],
+        )?;
+        Ok(part)
+    }
 }
 
 #[cfg(test)]
@@ -130,5 +170,34 @@ mod tests {
         assert_eq!(session.title, "first");
         assert!(!session.id.is_empty());
         assert!(session.archived_at.is_none());
+    }
+
+    #[test]
+    fn adds_a_message_with_two_parts() {
+        let store = open_test_store();
+        let session = store.create_session("s").unwrap();
+        let msg = store
+            .append_message(&session.id, serde_json::json!({"role": "user"}))
+            .unwrap();
+        assert_eq!(msg.session_id, session.id);
+        let p1 = store
+            .add_part(
+                &msg.id,
+                &session.id,
+                "proposed",
+                serde_json::json!({"n": 1}),
+            )
+            .unwrap();
+        let p2 = store
+            .add_part(
+                &msg.id,
+                &session.id,
+                "proposed",
+                serde_json::json!({"n": 2}),
+            )
+            .unwrap();
+        assert_ne!(p1.id, p2.id);
+        assert_eq!(p1.data, serde_json::json!({"n": 1}));
+        assert_eq!(p2.data, serde_json::json!({"n": 2}));
     }
 }
