@@ -24,11 +24,13 @@
 ### Task 1: Dependencies, schema bootstrap, `create_session`
 
 **Files:**
+
 - Modify: `src-tauri/Cargo.toml` (add dependencies)
 - Modify: `src-tauri/src/main.rs` (add `mod store;`)
 - Create: `src-tauri/src/store.rs` (error type, structs, `Store::open`, `create_session`, tests)
 
 **Interfaces:**
+
 - Consumes: nothing (first task).
 - Produces: `Store::open(&Path) -> Result<Store, StoreError>`; `Store::create_session(&str) -> Result<Session, StoreError>`; structs `Session`, `StoreError`.
 
@@ -220,9 +222,11 @@ git commit -m "Phase 1: store bootstrap with create_session"
 ### Task 2: `append_message` and `add_part`
 
 **Files:**
+
 - Modify: `src-tauri/src/store.rs` (append methods + tests)
 
 **Interfaces:**
+
 - Consumes: `Store::open`, `Store::create_session` from Task 1.
 - Produces: `Store::append_message(session_id: &str, data: JsonValue) -> Result<Message, StoreError>`; `Store::add_part(message_id: &str, session_id: &str, state: &str, data: JsonValue) -> Result<Part, StoreError>`.
 
@@ -318,9 +322,11 @@ git commit -m "Phase 1: append_message and add_part"
 ### Task 3: Merge-only `update_part`
 
 **Files:**
+
 - Modify: `src-tauri/src/store.rs` (`update_part` + private `get_part` reader + tests)
 
 **Interfaces:**
+
 - Consumes: everything from Tasks 1–2.
 - Produces: `Store::update_part(id: &str, patch: &JsonValue) -> Result<Part, StoreError>` — shallow-merges a JSON-object patch into `data` and also accepts a `state` key to move state; non-object patch → `PatchNotAnObject`; unknown id → `NotFound`. (A `state` key inside the patch updates the `state` column, not `data`, so the Part state machine in Phase 6 goes through this same merge path.)
 
@@ -454,10 +460,12 @@ git commit -m "Phase 1: merge-only update_part"
 ### Task 4: Quality gates and CI test step
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml` (add `cargo test` step)
 - Modify: none in Rust (verification only)
 
 **Interfaces:**
+
 - Consumes: all tasks above.
 - Produces: green `cargo test`, `cargo clippy`, `cargo fmt --check`, `npm run lint`; CI runs the Rust tests on every push.
 
@@ -488,7 +496,7 @@ errors. The binding gate is the `--all-targets` run.)
 In `.github/workflows/ci.yml`, after the clippy step, insert:
 
 ```yaml
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+- run: cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 - [ ] **Step 3: Manual evaluation (spec requirement)**
