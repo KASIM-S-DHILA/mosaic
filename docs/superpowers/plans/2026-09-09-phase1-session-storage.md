@@ -64,7 +64,7 @@ mod tests {
 
     fn open_test_store() -> Store {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.join("test.db");
+        let path = dir.path().join("test.db");
         // leak the dir so the file outlives the Store for the test body
         std::mem::forget(dir);
         Store::open(&path).unwrap()
@@ -457,13 +457,16 @@ cargo test --manifest-path src-tauri/Cargo.toml
 Expected: all 4 tests PASS. Then:
 
 ```bash
-cargo clippy --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --message-format short
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
 npm run lint
 ```
 
-Expected: zero warnings/errors. Fix any finding in `store.rs` before continuing
-(clippy pedantic lints are NOT enabled — only default warnings apply).
+Expected: zero clippy warnings under `--all-targets`, fmt clean, lint clean.
+(NOTE: plain `cargo clippy` without `--all-targets` still reports `dead_code`
+for `Store` items on the bin target, which has no callers yet by design —
+that is accepted; CI's plain clippy step passes since warnings are not
+errors. The binding gate is the `--all-targets` run.)
 
 - [ ] **Step 2: Add `cargo test` to CI**
 
