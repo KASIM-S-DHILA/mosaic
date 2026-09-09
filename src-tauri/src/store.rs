@@ -1,5 +1,5 @@
 use chrono::{DateTime, SecondsFormat, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde_json::Value as JsonValue;
 use std::path::Path;
 use uuid::Uuid;
@@ -25,10 +25,14 @@ impl std::fmt::Display for StoreError {
 
 impl std::error::Error for StoreError {}
 impl From<rusqlite::Error> for StoreError {
-    fn from(e: rusqlite::Error) -> Self { StoreError::Sql(e) }
+    fn from(e: rusqlite::Error) -> Self {
+        StoreError::Sql(e)
+    }
 }
 impl From<serde_json::Error> for StoreError {
-    fn from(e: serde_json::Error) -> Self { StoreError::Json(e) }
+    fn from(e: serde_json::Error) -> Self {
+        StoreError::Json(e)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
